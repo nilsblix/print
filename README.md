@@ -13,6 +13,14 @@ ascii-characters such as `/`, `|`, `\` and `-`. This is achieved through
 the [Sobol-operator](https://en.wikipedia.org/wiki/Sobel_operator).
 
 ---
+### Example Output
+Below is a side-by-side comparison of the original image and the program's rendered output.
+
+| Input (JPEG 2343×3514) | Output (JPEG 1084×1692) |
+| --- | --- |
+| <img src="res/dirk-erasmus-rhino.jpg" alt="Original rhino photo" width="420" height="630"> | <img src="res/dirk-erasmus-rhino-transformed.jpg" alt="Terminal-rendered output" width="420" height="630"> |
+
+---
 ### Quick Start
 If the program has been compiled (see Build for more details), then run
 this command to quickly get an image:
