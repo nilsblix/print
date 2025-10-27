@@ -5,6 +5,17 @@ const c = @cImport({
 });
 const clap = @import("clap");
 
+fn lumaBrightness(r: anytype, g: anytype, b: anytype) f32 {
+    const rf = @as(f32, @floatFromInt(r));
+    const gf = @as(f32, @floatFromInt(g));
+    const bf = @as(f32, @floatFromInt(b));
+    return 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
+}
+
+fn lumaBrightnessFloat(r: anytype, g: anytype, b: anytype) f32 {
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
 const Color = struct {
     r: u8 = 0,
     g: u8 = 0,
@@ -20,6 +31,17 @@ const Color = struct {
         };
     }
 
+    pub fn scale(self: Color, value: usize) Color {
+        const v: u32 = @intCast(value);
+        return .{
+            .r = @intCast(@as(u32, self.r) * v),
+            .g = @intCast(@as(u32, self.g) * v),
+            .b = @intCast(@as(u32, self.b) * v),
+            .a = @intCast(@as(u32, self.a) * v),
+        };
+
+    }
+
     pub fn div(self: Color, value: usize) Color {
         const v: u32 = @intCast(value);
         return .{
@@ -31,11 +53,7 @@ const Color = struct {
     }
 
     pub fn brightness(self: Color) f32 {
-        // Luma approximation (no alpha): Rec. 709
-        const rf = @as(f32, @floatFromInt(self.r));
-        const gf = @as(f32, @floatFromInt(self.g));
-        const bf = @as(f32, @floatFromInt(self.b));
-        return 0.2126 * rf + 0.7152 * gf + 0.0722 * bf;
+        return lumaBrightness(self.r, self.g, self.b);
     }
 
 
@@ -48,6 +66,20 @@ const Pixels = struct {
     items: []Color,
     width: usize,
     height: usize,
+
+    const sobel_kernel_x = [_]i32{ -1, 0, 1, -2, 0, 2, -1, 0, 1 };
+    const sobel_kernel_y = [_]i32{ -1, -2, -1, 0, 0, 0, 1, 2, 1 };
+    const sobel_offsets = [_]struct { i32, i32 }{
+        .{ -1, -1 },
+        .{  0, -1 },
+        .{  1, -1 },
+        .{ -1,  0 },
+        .{  0,  0 },
+        .{  1,  0 },
+        .{ -1,  1 },
+        .{  0,  1 },
+        .{  1,  1 },
+    };
 
     const Self = @This();
 
@@ -92,6 +124,97 @@ const Pixels = struct {
             .a = @intCast(@divTrunc(sum_a, count)),
         };
     }
+
+    pub fn posFromIndex(self: Self, idx: usize) struct { usize, usize } {
+        const rem = idx % self.width;
+        const row = (idx - rem) / self.width;
+        return .{ rem, row };
+    }
+
+    pub fn indexFromPos(self: Self, col: usize, row: usize) usize {
+        return row * self.width + col;
+    }
+
+    pub const SobelGlyph = enum {
+        pipe,
+        backward_slash,
+        dash,
+        forward_slash,
+        none,
+
+        fn toChar(self: SobelGlyph) ?u8 {
+            return switch (self) {
+                .none => null,
+                .forward_slash => '/',
+                .backward_slash => '\\',
+                .pipe => '|',
+                .dash => '-',
+            };
+        }
+
+        pub fn angleToGlyph(theta: f32) SobelGlyph {
+            const T = struct {
+                pub fn apply(x: f32) usize {
+                    return @intFromFloat(@round(4 * x / std.math.pi));
+                }
+            };
+            const idx = T.apply(@abs(theta));
+            if (idx > @intFromEnum(SobelGlyph.none)) {
+                return .none;
+            }
+            return @enumFromInt(idx);
+        }
+    };
+
+    /// Populates Sobel glyphs into `buf`. This function assumes that `buf`
+    /// already has the correct amount of elements.
+    pub fn sobelGlyphs(self: Self, buf: *[]SobelGlyph, edge_weight: usize) void {
+        for (self.items, 0..) |_, idx| {
+            const pos = self.posFromIndex(idx);
+
+            // If the pixel is at the border of the image, then no image can be found here.
+            if (pos.@"0" == 0 or pos.@"0" == self.width - 1 or pos.@"1" == 0 or pos.@"1" == self.height - 1) {
+                buf.*[idx] = .none;
+                continue;
+            }
+
+            const Acc = struct { f32, f32, f32 };
+            var acc_x: Acc = .{ 0.0, 0.0, 0.0 };
+            var acc_y: Acc = .{ 0.0, 0.0, 0.0 };
+            for (0..9) |kernel_idx| {
+                const offset = Pixels.sobel_offsets[kernel_idx];
+
+                const col: i32 = @as(i32, @intCast(pos.@"0")) + offset.@"0";
+                const row: i32 = @as(i32, @intCast(pos.@"1")) + offset.@"1";
+
+                const offset_idx = self.indexFromPos(@intCast(col), @intCast(row));
+                const value = self.items[offset_idx];
+
+                const sobel_kernel_value_x = Pixels.sobel_kernel_x[kernel_idx];
+                acc_x.@"0" += @as(f32, @floatFromInt(value.r)) * @as(f32, @floatFromInt(sobel_kernel_value_x));
+                acc_x.@"1" += @as(f32, @floatFromInt(value.g)) * @as(f32, @floatFromInt(sobel_kernel_value_x));
+                acc_x.@"2" += @as(f32, @floatFromInt(value.b)) * @as(f32, @floatFromInt(sobel_kernel_value_x));
+
+                const sobel_kernel_value_y = Pixels.sobel_kernel_y[kernel_idx];
+                acc_y.@"0" += @as(f32, @floatFromInt(value.r)) * @as(f32, @floatFromInt(sobel_kernel_value_y));
+                acc_y.@"1" += @as(f32, @floatFromInt(value.g)) * @as(f32, @floatFromInt(sobel_kernel_value_y));
+                acc_y.@"2" += @as(f32, @floatFromInt(value.b)) * @as(f32, @floatFromInt(sobel_kernel_value_y));
+            }
+
+            const acc_x_sq = acc_x.@"0" * acc_x.@"0" + acc_x.@"1" * acc_x.@"1" + acc_x.@"2" * acc_x.@"2";
+            const acc_y_sq = acc_y.@"0" * acc_y.@"0" + acc_y.@"1" * acc_y.@"1" + acc_y.@"2" * acc_y.@"2";
+
+            const sobel = @sqrt(acc_x_sq + acc_y_sq);
+            if (sobel > @as(f32, @floatFromInt(edge_weight))) {
+                const brightness_x = lumaBrightnessFloat(acc_x.@"0", acc_x.@"1", acc_x.@"2");
+                const brightness_y = lumaBrightnessFloat(acc_y.@"0", acc_y.@"1", acc_y.@"2");
+                const theta = std.math.atan2(brightness_y, brightness_x);
+                buf.*[idx] = SobelGlyph.angleToGlyph(theta);
+            } else {
+                buf.*[idx] = SobelGlyph.none;
+            }
+        }
+    }
 };
 
 const Config = struct {
@@ -101,6 +224,8 @@ const Config = struct {
     char_aspect: f32    = 2.0,
     ramp: []const u8    = " .-=+*#&@",
     use_color: bool     = true,
+    display_edges: bool = true,
+    edge_weight: usize  = 500,
 };
 
 const StbConfig = struct {
@@ -167,6 +292,22 @@ fn createTerminalPixels(buf: *[]Color, pixels: Pixels, config: Config, stb_confi
     };
 }
 
+fn printPixel(alloc: Allocator, px: Color, ramp: []const u8, use_color: bool) !void {
+    const brightness = px.brightness();
+    const max_brightness = 255.0;
+    const clamped = if (brightness < 0.0) 0.0 else if (brightness > max_brightness) max_brightness else brightness;
+    const normalized = clamped / max_brightness;
+    const ramp_pos = normalized * @as(f32, @floatFromInt(ramp.len - 1));
+    const ch = ramp[@as(usize, @intFromFloat(@floor(ramp_pos)))];
+
+    if (use_color) {
+        const sgr = try px.toSgr(alloc);
+        std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
+    } else {
+        std.debug.print("{c}", .{ch});
+    }
+}
+
 fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
     const capacity = config.width * config.height;
     var list = try std.ArrayList(Color).initCapacity(alloc, capacity);
@@ -176,37 +317,51 @@ fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig
 
     const terminal = try createTerminalPixels(&list.items, pixels, config, stb_config);
 
+    var sobel_list: std.ArrayList(Pixels.SobelGlyph) = undefined;
+    if (config.display_edges) {
+        // Note that we do not put any defer deinit statement here, as it would
+        // get deinitialized when this scope ends, which is not wanted
+        // behaviour.
+        sobel_list = try std.ArrayList(Pixels.SobelGlyph).initCapacity(alloc, capacity);
+        try sobel_list.resize(alloc, capacity);
+        terminal.sobelGlyphs(&sobel_list.items, config.edge_weight);
+    }
+
     for (terminal.items, 0..) |px, idx| {
-        const brightness = px.brightness();
-        const max_brightness = 255.0; // Luma brightness
-        const clamped = if (brightness < 0.0) 0.0 else if (brightness > max_brightness) max_brightness else brightness;
-        const normalized = clamped / max_brightness;
-        const ramp_pos = normalized * @as(f32, @floatFromInt(config.ramp.len - 1));
-        const ch = config.ramp[@as(usize, @intFromFloat(@floor(ramp_pos)))];
-
-        if (config.use_color) {
-            const sgr = try px.toSgr(alloc);
-            std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
-        } else {
-            std.debug.print("{c}", .{ch});
-        }
-
         if (idx % terminal.width == 0) {
             std.debug.print("\n", .{});
         }
+
+        if (config.display_edges and sobel_list.items[idx] != .none) {
+            const ch = sobel_list.items[idx].toChar() orelse unreachable;
+            const sgr = try px.toSgr(alloc);
+            std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
+        } else {
+            try printPixel(alloc, px, config.ramp, config.use_color);
+        }
     }
+
+    // We need to deinit the list here, because if a `defer` statement was put
+    // inside the block where sobel_list was initialized, then it would deinit
+    // the list before it the loop.
+    if (config.display_edges)
+        sobel_list.deinit(alloc);
+
+    std.debug.print("\n", .{});
 }
 
 pub fn main() !void {
     const alloc = std.heap.page_allocator;
 
     const params = comptime clap.parseParamsComptime(
-        \\-h, --help                 Display this help and exit.
-        \\-w, --width <usize>        Output width in characters.
-        \\-a, --aspect <f32>         Character aspect ratio (height/width). Defaults to 2.0.
-        \\--ramp <str>               The character rampt to use when defining brightness.
-        \\-n, --nocolor              Do not use colors.
-        \\--path <str>               Path to the image that should be printed.
+        \\-h, --help                Display this help and exit.
+        \\-w, --width <usize>       Output width in characters.
+        \\-a, --aspect <f32>        Character aspect ratio (height/width). Defaults to 2.0.
+        \\--ramp <str>              The character rampt to use when defining brightness.
+        \\--nocolor                 Disable colors.
+        \\--noedges                 Disable edge-highlighting.
+        \\--edgeweight <usize>      The required weight for edge-detection. Defaults to 500.
+        \\--path <str>              Path to the image that should be printed.
     );
 
     var diag = clap.Diagnostic{};
@@ -235,6 +390,8 @@ pub fn main() !void {
     if (res.args.aspect)    |a| config.char_aspect = a;
     if (res.args.ramp)      |r| config.ramp = r;
     if (res.args.nocolor != 0)  config.use_color = false;
+    if (res.args.noedges != 0)  config.display_edges = false;
+    if (res.args.edgeweight) |r| config.edge_weight = r;
 
     var stb_config: StbConfig = undefined;
 
