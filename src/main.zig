@@ -109,21 +109,6 @@ const StbConfig = struct {
     channels: usize,
 };
 
-fn calculateGridRows(config: Config, stb_config: StbConfig) usize {
-    const cols_requested: usize = if (config.width == 0) 1 else config.width;
-    const cols: usize = @min(cols_requested, stb_config.width);
-    const cols_f = @as(f64, @floatFromInt(cols));
-    const w_f = @as(f64, @floatFromInt(stb_config.width));
-    const h_f = @as(f64, @floatFromInt(stb_config.height));
-    const aspect_f = @as(f64, config.char_aspect);
-    var rows_calc_f = (h_f * cols_f) / (w_f * aspect_f);
-    if (rows_calc_f < 1.0) rows_calc_f = 1.0;
-    var rows_calc_usize: usize = @intFromFloat(@round(rows_calc_f));
-    if (rows_calc_usize == 0) rows_calc_usize = 1;
-    const rows: usize = @min(rows_calc_usize, stb_config.height);
-    return rows;
-}
-
 fn calculateHeight(config: Config, stb_config: StbConfig) usize {
     const aspect: f32 = @as(f32, @floatFromInt(stb_config.height)) / @as(f32, @floatFromInt(stb_config.width));
     const height_float = @as(f32, @floatFromInt(config.width)) * aspect / config.char_aspect;
@@ -161,6 +146,57 @@ fn terminalPosToPixelPos(config: Config, stb_config: StbConfig, col: usize, row:
     return .{ cp, rp };
 }
 
+/// Assumes that buf has the correct number of elements.
+fn createTerminalPixels(buf: *[]Color, pixels: Pixels, config: Config, stb_config: StbConfig) !Pixels {
+    const block_width = @max(@as(usize, 1), stb_config.width / config.width);
+    const block_height = @max(@as(usize, 1), stb_config.height / config.height);
+
+    for (0..config.height) |row| {
+        for (0..config.width) |col| {
+            const pixel_pos = terminalPosToPixelPos(config, stb_config, col, row);
+            const avg = pixels.sampleBlockAvg(pixel_pos.@"0", pixel_pos.@"1", block_width, block_height);
+            const idx = row * config.width + col;
+            buf.*[idx]= avg;
+        }
+    }
+
+    return Pixels {
+        .items = buf.*,
+        .width = config.width,
+        .height = config.height,
+    };
+}
+
+fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
+    const capacity = config.width * config.height;
+    var list = try std.ArrayList(Color).initCapacity(alloc, capacity);
+    defer list.deinit(alloc);
+
+    try list.resize(alloc, capacity);
+
+    const terminal = try createTerminalPixels(&list.items, pixels, config, stb_config);
+
+    for (terminal.items, 0..) |px, idx| {
+        const brightness = px.brightness();
+        const max_brightness = 255.0; // Luma brightness
+        const clamped = if (brightness < 0.0) 0.0 else if (brightness > max_brightness) max_brightness else brightness;
+        const normalized = clamped / max_brightness;
+        const ramp_pos = normalized * @as(f32, @floatFromInt(config.ramp.len - 1));
+        const ch = config.ramp[@as(usize, @intFromFloat(@floor(ramp_pos)))];
+
+        if (config.use_color) {
+            const sgr = try px.toSgr(alloc);
+            std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
+        } else {
+            std.debug.print("{c}", .{ch});
+        }
+
+        if (idx % terminal.width == 0) {
+            std.debug.print("\n", .{});
+        }
+    }
+}
+
 pub fn main() !void {
     const alloc = std.heap.page_allocator;
 
@@ -186,7 +222,7 @@ pub fn main() !void {
     if (res.args.help != 0)
         return clap.helpToFile(.stderr(), clap.Help, &params, .{});
 
-    var config = Config{ .path = "TEMPORARY" };
+    var config = Config{ .path = undefined };
 
     if (res.args.path) |p| {
         config.path = p;
@@ -204,30 +240,5 @@ pub fn main() !void {
 
     const pixels, stb_config = try loadImage(config);
     config.height = calculateHeight(config, stb_config);
-
-    const block_width = stb_config.width / config.width;
-    const block_height = stb_config.height / config.height;
-
-    for (0..config.height) |row| {
-        for (0..config.width) |col| {
-            const pixel_pos = terminalPosToPixelPos(config, stb_config, col, row);
-            const avg = pixels.sampleBlockAvg(pixel_pos.@"0", pixel_pos.@"1", block_width, block_height);
-
-            const brightness = avg.brightness();
-            const max_brightness: f32 = 255.0; // Max for luma.
-
-            const clamped = @max(0.0, brightness, @min(max_brightness, brightness));
-            const normalized = clamped / max_brightness;
-            const ramp_pos = normalized * @as(f32, @floatFromInt(config.ramp.len - 1));
-            const ch = config.ramp[@as(usize, @intFromFloat(@floor(ramp_pos)))];
-
-            if (config.use_color) {
-                const sgr = try avg.toSgr(alloc);
-                std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
-            } else {
-                std.debug.print("{c}", .{ch});
-            }
-        }
-        std.debug.print("\n", .{});
-    }
+    try print(alloc, pixels, config, stb_config);
 }
