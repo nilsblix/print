@@ -172,7 +172,7 @@ const Pixels = struct {
         for (self.items, 0..) |_, idx| {
             const pos = self.posFromIndex(idx);
 
-            // If the pixel is at the border of the image, then no image can be found here.
+            // If the pixel is at the border of the image, then no edge can be found here.
             if (pos.@"0" == 0 or pos.@"0" == self.width - 1 or pos.@"1" == 0 or pos.@"1" == self.height - 1) {
                 buf.*[idx] = .none;
                 continue;
@@ -334,7 +334,7 @@ fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig
 
         if (config.display_edges and sobel_list.items[idx] != .none) {
             const ch = sobel_list.items[idx].toChar() orelse unreachable;
-            const sgr = try px.toSgr(alloc);
+            const sgr = if (config.use_color) try px.toSgr(alloc) else "";
             std.debug.print("\x1b[{s}m{c}\x1b[39m", .{sgr, ch});
         } else {
             try printPixel(alloc, px, config.ramp, config.use_color);
