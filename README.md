@@ -10,7 +10,7 @@ program averages the color of the inner pixels, which then contribute to the
 overall colour of the ascii-character meant to describe that region.
 - Edge detection: To make edges easier to see edges get highlighted with
 ascii-characters such as `/`, `|`, `\` and `-`. This is achieved through
-the [Sobol-operator](https://en.wikipedia.org/wiki/Sobel_operator).
+the [Sobel operator](https://en.wikipedia.org/wiki/Sobel_operator).
 
 ---
 ### Example Output
