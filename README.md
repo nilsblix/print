@@ -14,11 +14,15 @@ the [Sobel operator](https://en.wikipedia.org/wiki/Sobel_operator).
 
 ---
 ### Example Output
-Below is a side-by-side comparison of the original image and the program's rendered output.
+Below are some side-by-side comparisons of the original image and the program's rendered output.
 
-| Input (JPEG 2343×3514) | Output (JPEG 1084×1692) |
+| Input | Output |
 | --- | --- |
-| <img src="res/dirk-erasmus-rhino.jpg" alt="Original rhino photo" width="420" height="630"> | <img src="res/dirk-erasmus-rhino-transformed.jpg" alt="Terminal-rendered output" width="420" height="630"> |
+| <img src="res/yacht_antibes.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/yacht_antibes_solid.png" alt="Terminal-rendered output" width="420" height="630"> |
+
+| Input | Output |
+| --- | --- |
+| <img src="res/flower.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/flower_ascii.png" alt="Terminal-rendered output" width="420" height="630"> |
 
 ---
 ### Quick Start
