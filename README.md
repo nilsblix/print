@@ -18,11 +18,11 @@ Below are some side-by-side comparisons of the original image and the program's 
 
 | Input | Output |
 | --- | --- |
-| <img src="res/yacht_antibes.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/yacht_antibes_solid.png" alt="Terminal-rendered output" width="420" height="630"> |
+| <img src="res/yacht_antibes_low.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/yacht_antibes_solid.png" alt="Terminal-rendered output" width="420" height="630"> |
 
 | Input | Output |
 | --- | --- |
-| <img src="res/flower.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/flower_ascii.png" alt="Terminal-rendered output" width="420" height="630"> |
+| <img src="res/flower_low.jpeg" alt="Original photo" width="420" height="630"> | <img src="res/flower_ascii.png" alt="Terminal-rendered output" width="420" height="630"> |
 
 ---
 ### Quick Start
