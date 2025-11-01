@@ -226,6 +226,28 @@ const Config = struct {
     use_color: bool     = true,
     display_edges: bool = true,
     edge_weight: usize  = 500,
+    use_solid: bool     = false,
+
+    const Validation = union(enum) {
+        ok,
+        message: []const u8,
+    };
+
+    /// Args come from clap.
+    fn validate(self: Config, args: anytype) Validation {
+        if (args.path == null)
+            return .{ .message = "No path was supplied." };
+        if (self.use_solid and args.ramp != null) {
+            return .{ .message = "Solid cannot have a specified ramp." };
+        }
+        if (self.use_solid and args.nocolor != 0)
+            return .{ .message = "Solid cannot be colorless." };
+        if (self.use_solid and args.noedges != 0)
+            return .{ .message = "Solid cannot be specified with noedges." };
+        if (self.use_solid and args.edgeweight != null)
+            return .{ .message = "Solid has no edges, therefore edgeweight is irrelevant." };
+        return .ok;
+    }
 };
 
 const StbConfig = struct {
@@ -308,7 +330,7 @@ fn printPixel(alloc: Allocator, px: Color, ramp: []const u8, use_color: bool) !v
     }
 }
 
-fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
+fn printAscii(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
     const capacity = config.width * config.height;
     var list = try std.ArrayList(Color).initCapacity(alloc, capacity);
     defer list.deinit(alloc);
@@ -328,7 +350,7 @@ fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig
     }
 
     for (terminal.items, 0..) |px, idx| {
-        if (idx % terminal.width == 0) {
+        if (idx % terminal.width == 0 and idx != 0) {
             std.debug.print("\n", .{});
         }
 
@@ -350,6 +372,35 @@ fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig
     std.debug.print("\n", .{});
 }
 
+fn printSolid(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
+    const capacity = config.width * config.height;
+    var list = try std.ArrayList(Color).initCapacity(alloc, capacity);
+    defer list.deinit(alloc);
+
+    try list.resize(alloc, capacity);
+
+    const terminal = try createTerminalPixels(&list.items, pixels, config, stb_config);
+
+    for (terminal.items, 0..) |px, idx| {
+        if (idx % terminal.width == 0 and idx != 0) {
+            std.debug.print("\n", .{});
+        }
+        const sgr = try px.toSgr(alloc);
+        const ch: []const u8 = "\u{2588}";
+        std.debug.print("\x1b[{s}m{s}\x1b[39m", .{sgr, ch});
+    }
+
+    std.debug.print("\n", .{});
+}
+
+fn print(alloc: Allocator, pixels: Pixels, config: Config, stb_config: StbConfig) !void {
+    if (config.use_solid) {
+        try printSolid(alloc, pixels, config, stb_config);
+    } else {
+        try printAscii(alloc, pixels, config, stb_config);
+    }
+}
+
 pub fn main() !void {
     const alloc = std.heap.page_allocator;
 
@@ -361,6 +412,7 @@ pub fn main() !void {
         \\--nocolor                 Disable colors.
         \\--noedges                 Disable edge-highlighting.
         \\--edgeweight <usize>      The required weight for edge-detection. Defaults to 500.
+        \\--solid                   Use solid pixels instead of ascii-characters. Uses Nerd Characters to print solid characters. This option errors when combined with edge, ramp and color options.
         \\--path <str>              Path to the image that should be printed.
     );
 
@@ -379,19 +431,22 @@ pub fn main() !void {
 
     var config = Config{ .path = undefined };
 
-    if (res.args.path) |p| {
-        config.path = p;
-    } else {
-        std.debug.print("ERROR: No path was supplied.\n", .{});
-        return;
-    }
+    if (res.args.path) |p|          config.path = p;
+    if (res.args.width) |w|         config.width = w;
+    if (res.args.aspect) |a|        config.char_aspect = a;
+    if (res.args.ramp) |r|          config.ramp = r;
+    if (res.args.nocolor != 0)      config.use_color = false;
+    if (res.args.noedges != 0)      config.display_edges = false;
+    if (res.args.edgeweight) |r|    config.edge_weight = r;
+    if (res.args.solid != 0)        config.use_solid = true;
 
-    if (res.args.width)     |w| config.width = w;
-    if (res.args.aspect)    |a| config.char_aspect = a;
-    if (res.args.ramp)      |r| config.ramp = r;
-    if (res.args.nocolor != 0)  config.use_color = false;
-    if (res.args.noedges != 0)  config.display_edges = false;
-    if (res.args.edgeweight) |r| config.edge_weight = r;
+    switch (config.validate(res.args)) {
+        .message => |m| {
+            std.debug.print("ERROR: Failed to validate Config: {s}\n", .{m});
+            return;
+        },
+        else => { },
+    }
 
     var stb_config: StbConfig = undefined;
 
